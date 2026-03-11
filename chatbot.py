@@ -1,20 +1,11 @@
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-import torch
+import os
 from database import db
 from sqlalchemy import text
+from dotenv import load_dotenv
+from google import genai
 
-
-print("Loading Text-to-SQL model...")
-model_path = 'gaussalgo/T5-LM-Large-text2sql-spider'
-sql_model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
-sql_tokenizer = AutoTokenizer.from_pretrained(model_path)
-
-
-print("Loading Flan-T5 model...")
-flan_tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-base")
-flan_model     = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-base")
-flan_model.eval()
-
+load_dotenv()
+client = genai.Client(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
 
 SCHEMA = """
 CREATE TABLE flowers (
@@ -43,33 +34,36 @@ CREATE TABLE orders (
 
 
 def generate_sql(user_question):
-    """Convert owner's question to SQL query."""
+    prompt = f"""
+    You are a PostgreSQL expert.
+    Given this database schema:
+    {SCHEMA}
 
-    prompt = f"tables:\n{SCHEMA}\nquery for: {user_question}"
+    Convert this question to a valid PostgreSQL SELECT query:
+    "{user_question}"
 
-    inputs = sql_tokenizer(
-        prompt,
-        padding=True,
-        truncation=True,
-        return_tensors="pt"
-    )
+    Rules:
+    - Return ONLY the SQL query, nothing else
+    - No explanations, no markdown, no backticks
+    - Only SELECT queries, never DELETE or UPDATE
+    - Use proper JOINs when needed
+    - Use LOWER() for name comparisons
+    """
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents = prompt)
+    return response.text.strip()
 
-    with torch.no_grad():
-        outputs = sql_model.generate(
-            **inputs,
-            max_length=256,
-            num_beams=4,
-            early_stopping=True
-        )
+    # clean up in case Gemini adds backticks or markdown
+    sql = sql.replace("```sql", "").replace("```", "").strip()
 
-    sql = sql_tokenizer.decode(outputs[0], skip_special_tokens=True)
     print(f"Generated SQL: {sql}")
-    return sql.strip()
+    return sql
 
 
 def run_sql(sql):
-    """Run the generated SQL on PostgreSQL."""
     try:
+        # safety check — only allow SELECT queries
         if not sql.strip().lower().startswith("select"):
             return None, "Only SELECT queries are allowed."
 
@@ -80,56 +74,34 @@ def run_sql(sql):
         return data, None
 
     except Exception as e:
+        # rollback broken transaction so next query works
         db.session.rollback()
         print(f"SQL Error: {e}")
         return None, str(e)
+    
 
-
-def generate_text(prompt):
-    inputs = flan_tokenizer(
-        prompt,
-        return_tensors="pt",
-        max_length=512,
-        truncation=True
-    )
-    with torch.no_grad():
-        outputs = flan_model.generate(
-            **inputs,
-            max_length=200,
-            num_beams=4,
-            early_stopping=True
-        )
-    return flan_tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-
-
-def generate_description(user_question, data):
-    """Use Flan-T5 to describe the result and give suggestions."""
-
-
-    data_str = "\n".join(
-        [", ".join(f"{k}: {v}" for k, v in row.items()) for row in data]
-    )
-
-
-    description_prompt = f"""
+def generate_description(user_question, data_str):
+    prompt = f"""
     You are a friendly flower shop assistant reporting to the owner.
+    Reply in a friendly and professional way.
     The owner asked: "{user_question}"
     The database returned this data:
     {data_str}
 
     Write a brief and clear description of this result in 2-3 sentences.
+    If data is empty or not relevant to a DB query, reply as a 
+    friendly assistant and mention you can help with sales, 
+    stock, orders and customers.
     """
-    description = generate_text(description_prompt)
-
-    return description 
+    response = client.models.generate_content(
+        model="gemini-2.0-flash",
+        content = prompt)
+    return response.text.strip() 
 
 
 def get_chat_response(user_question):
-    """Main function called from app.py."""
 
     sql = generate_sql(user_question)
-
     data, error = run_sql(sql)
 
     if error or not data:
@@ -139,18 +111,8 @@ def get_chat_response(user_question):
             [", ".join(f"{k}: {v}" for k, v in row.items()) for row in data]
         )
 
-    description = generate_text(f"""
-    You are a friendly flower shop assistant reporting to the owner.
-    Reply in a friendly and professional way.
-    Keep it short and mention you can help with
-    shop reports like sales, stock, orders and customers.
-    The owner asked: "{user_question}"
-    The database returned this data:
-    {data_str}
+    description = generate_description(user_question, data_str)
 
-    Write a brief and clear description of this result in 2-3 sentences.
-    """)
-
-    return description
+    return description   
 
 
