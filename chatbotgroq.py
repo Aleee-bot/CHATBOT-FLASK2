@@ -1,13 +1,13 @@
 import os
 import time
+from groq import Groq
 from database import db
 from sqlalchemy import text
 from dotenv import load_dotenv
-from google import genai
 
 load_dotenv()
 
-client = genai.Client(api_key=os.getenv("GOOGLE_GEMINI_API_KEY"))
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 SCHEMA = """
 CREATE TABLE flowers (
@@ -34,6 +34,13 @@ CREATE TABLE orders (
 );
 """
 
+def call_llm(prompt):
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant", 
+        messages=[{"role": "user", "content": prompt}]
+    )
+    return response.choices[0].message.content.strip()
+
 
 def generate_sql(user_question):
     prompt = f"""
@@ -51,16 +58,12 @@ def generate_sql(user_question):
     - Use proper JOINs when needed
     - Use LOWER() for name comparisons
     """
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents = prompt
-        )
-    sql = response.text.strip()
+    sql = call_llm(prompt)
 
     sql = sql.replace("```sql", "").replace("```", "").strip()
+
     print(f"Generated SQL: {sql}")
     return sql
-
 
 def run_sql(sql):
     try:
@@ -77,7 +80,7 @@ def run_sql(sql):
         db.session.rollback()
         print(f"SQL Error: {e}")
         return None, str(e)
-    
+
 
 def generate_description(user_question, data_str):
     prompt = f"""
@@ -88,36 +91,28 @@ def generate_description(user_question, data_str):
     {data_str}
 
     Write a brief and clear description of this result in 2-3 sentences.
-    If data is empty or not relevant to a DB query, reply as a 
-    friendly assistant and mention you can help with sales, 
+    If data is empty or not relevant to a DB query, reply as a
+    friendly assistant and mention you can help with sales,
     stock, orders and customers.
     """
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        content = prompt)
-    return response.text.strip() 
+    return call_llm(prompt)
 
 
 def get_chat_response(user_question):
-    # try:
-    sql = generate_sql(user_question)
-    time.sleep(20)
-    data, error = run_sql(sql)
+    try:
+        sql = generate_sql(user_question)
 
-    if error or not data:
-        data_str = "No data found."
-    else:
-        data_str = "\n".join(
-            [", ".join(f"{k}: {v}" for k, v in row.items()) for row in data]
-        )
-    time.sleep(20)    
+        data, error = run_sql(sql)
 
-    description = generate_description(user_question, data_str)
-    return description   
-    
-    # except Exception as e:
-    #     if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-    #         return "API quota exceeded. Please try again in a few minutes or check your Gemini API plan."
-    #     return f"Something went wrong: {str(e)}"
+        if error or not data:
+            data_str = "No data found."
+        else:
+            data_str = "\n".join(
+                [", ".join(f"{k}: {v}" for k, v in row.items()) for row in data]
+            )
 
+        description = generate_description(user_question, data_str)
+        return description
 
+    except Exception as e:
+        return f"Something went wrong: {str(e)}"

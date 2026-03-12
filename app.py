@@ -4,7 +4,8 @@ from flask import Flask, render_template, jsonify, request
 from database import db
 from models import Flower, Customer, Order
 from sqlalchemy import text as sa_text
-from chatbot import get_chat_response
+#from chatbot import get_chat_response
+from chatbotgroq import get_chat_response
 
 load_dotenv()
 
@@ -50,7 +51,7 @@ def report():
 
 @app.route("/add_flower", methods=["POST"])
 def add_flower():
-    data       = request.get_json()
+    data = request.get_json()
     new_flower = Flower(name=data["name"], quantity=data["quantity"], price=data["price"])
     db.session.add(new_flower)
     db.session.commit()
@@ -59,7 +60,7 @@ def add_flower():
 
 @app.route("/add_order", methods=["POST"])
 def add_order():
-    data      = request.get_json()
+    data = request.get_json()
     new_order = Order(
         customer_id=data["customer_id"],
         flower_id=data["flower_id"],
@@ -73,7 +74,7 @@ def add_order():
 
 @app.route("/add_customer", methods=["POST"])
 def add_customer():
-    data         = request.get_json()
+    data = request.get_json()
     new_customer = Customer(name=data["name"], email=data["email"], phone=data["phone"])
     db.session.add(new_customer)
     db.session.commit()
