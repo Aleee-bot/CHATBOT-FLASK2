@@ -27,7 +27,15 @@ class Order(db.Model):
     quantity = db.Column(db.Integer, nullable=False)
     total_price = db.Column(db.Float, nullable=False)
     order_date = db.Column(db.DateTime, default=datetime.utcnow)
+    status = db.Column(db.String(20), default="completed") 
 
     customer = db.relationship('Customer', back_populates='orders')
     flower = db.relationship('Flower', back_populates='orders')
 
+
+class ChatHistory(db.Model):
+    __tablename__ = "chat_history"
+    id         = db.Column(db.Integer, primary_key=True)
+    role       = db.Column(db.String(20), nullable=False)   
+    content    = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)

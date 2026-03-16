@@ -81,3 +81,35 @@ function sendMessage() {
     input.focus();
   });
 }
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/history');
+    const data = await res.json();
+ 
+    if (!data || data.length === 0) return;
+    messages.innerHTML = '';
+ 
+    data.forEach(msg => {
+      const sender = msg.role === 'user' ? 'user' : 'bot';
+      addMessage(msg.content, sender);
+    });
+  } catch (err) {
+    console.error('Could not load chat history:', err);
+  }
+}
+ 
+window.addEventListener('DOMContentLoaded', loadHistory);
+
+
+function clearChat() {
+  fetch('/clear_history', { method: 'POST' })
+    .then(res => res.json())
+    .then(() => {
+      messages.innerHTML = '';
+      addMessage("Hi! I'm your shop assistant.", 'bot');
+    })
+    .catch(() => {
+      addMessage('Could not clear chat. Please try again.', 'bot');
+    });
+}

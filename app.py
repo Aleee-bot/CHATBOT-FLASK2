@@ -1,8 +1,9 @@
 import os
 from dotenv import load_dotenv
+from flask_migrate import Migrate
 from flask import Flask, render_template, jsonify, request
 from database import db
-from models import Flower, Customer, Order
+from models import Flower, Customer, Order , ChatHistory
 from sqlalchemy import text as sa_text
 #from chatbot import get_chat_response
 from chatbotgroq import get_chat_response
@@ -12,6 +13,7 @@ load_dotenv()
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL")
 db.init_app(app)   
+migrate = Migrate(app,db)
 
 with app.app_context():
     db.create_all()
@@ -55,7 +57,7 @@ def add_flower():
     new_flower = Flower(name=data["name"], quantity=data["quantity"], price=data["price"])
     db.session.add(new_flower)
     db.session.commit()
-    return jsonify({"message": "Flower added successfully!"}), 201
+    return jsonify({"message": "Flower added successfully!"})
 
 
 @app.route("/add_order", methods=["POST"])
@@ -69,7 +71,7 @@ def add_order():
     )
     db.session.add(new_order)
     db.session.commit()
-    return jsonify({"message": "Order recorded!"}), 201
+    return jsonify({"message": "Order recorded!"})
 
 
 @app.route("/add_customer", methods=["POST"])
@@ -78,7 +80,23 @@ def add_customer():
     new_customer = Customer(name=data["name"], email=data["email"], phone=data["phone"])
     db.session.add(new_customer)
     db.session.commit()
-    return jsonify({"message": "Customer added successfully!"}), 201
+    return jsonify({"message": "Customer added successfully!"})
+
+
+@app.route("/history", methods=["GET"])
+def get_history():
+    messages = ChatHistory.query.order_by(ChatHistory.created_at.asc()).all()
+    return jsonify([
+        {"role": m.role, "content": m.content}
+        for m in messages
+    ])
+
+
+@app.route("/clear_history", methods=["POST"])
+def clear_history():
+    ChatHistory.query.delete()
+    db.session.commit()
+    return jsonify({"message": "Chat history cleared!"})
 
 
 if __name__ == "__main__":

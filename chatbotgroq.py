@@ -1,69 +1,61 @@
 import os
-import time
 from groq import Groq
 from database import db
 from sqlalchemy import text
 from dotenv import load_dotenv
+from models import ChatHistory
+from prompts import SYSTEM_PROMPT , SQL_PROMPT , RESPONSE_PROMPT , SCHEMA
 
 load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-SCHEMA = """
-CREATE TABLE flowers (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(80) NOT NULL,
-    quantity INTEGER NOT NULL,
-    price FLOAT NOT NULL
-);
+MAX_HISTORY_EXCHANGES = 10
 
-CREATE TABLE customers (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(80) NOT NULL,
-    email VARCHAR(120) NOT NULL UNIQUE,
-    phone VARCHAR(20) NOT NULL
-);
+def load_history():
+    """Load recent chat history from DB, ordered oldest first."""
+    rows = (
+        ChatHistory.query
+        .order_by(ChatHistory.created_at.asc())
+        .limit(MAX_HISTORY_EXCHANGES * 2)   
+        .all()
+    )
+    return [{"role": row.role, "content": row.content} for row in rows]
 
-CREATE TABLE orders (
-    id SERIAL PRIMARY KEY,
-    customer_id INTEGER REFERENCES customers(id),
-    flower_id INTEGER REFERENCES flowers(id),
-    quantity INTEGER NOT NULL,
-    total_price FLOAT NOT NULL,
-    order_date TIMESTAMP DEFAULT NOW()
-);
-"""
 
-def call_llm(prompt):
+def save_message(role, content):
+    """Persist a single message to the chat_history table."""
+    msg = ChatHistory(role=role, content=content)
+    db.session.add(msg)
+    db.session.commit()
+
+
+def clear_history():
+    """Wipe all chat history — useful for starting a fresh session."""
+    ChatHistory.query.delete()
+    db.session.commit()
+
+
+def call_llm(messages):
+    """
+    Call Groq with a full message list.
+    messages = [system_prompt] + history + [current_user_message]
+    """
     response = client.chat.completions.create(
-        model="llama-3.1-8b-instant", 
-        messages=[{"role": "user", "content": prompt}]
+        model="llama-3.1-8b-instant",
+        messages=messages
     )
     return response.choices[0].message.content.strip()
 
 
-def generate_sql(user_question):
-    prompt = f"""
-    You are a PostgreSQL expert.
-    Given this database schema:
-    {SCHEMA}
-
-    Convert this question to a valid PostgreSQL SELECT query:
-    "{user_question}"
-
-    Rules:
-    - Return ONLY the SQL query, nothing else
-    - No explanations, no markdown, no backticks
-    - Only SELECT queries, never DELETE or UPDATE
-    - Use proper JOINs when needed
-    - Use LOWER() for name comparisons
-    """
-    sql = call_llm(prompt)
-
+def generate_sql(user_question, history):
+    prompt = SQL_PROMPT.format(schema=SCHEMA, question=user_question)
+    messages = [SYSTEM_PROMPT] + history + [{"role": "user", "content": prompt}]
+    sql = call_llm(messages)
     sql = sql.replace("```sql", "").replace("```", "").strip()
-
-    print(f"Generated SQL: {sql}")
+    print(f"[SQL] {sql}")
     return sql
+
 
 def run_sql(sql):
     try:
@@ -78,41 +70,35 @@ def run_sql(sql):
 
     except Exception as e:
         db.session.rollback()
-        print(f"SQL Error: {e}")
+        print(f"[SQL Error] {e}")
         return None, str(e)
 
 
-def generate_description(user_question, data_str):
-    prompt = f"""
-    You are a friendly flower shop assistant reporting to the owner.
-    Reply in a friendly and professional way.
-    The owner asked: "{user_question}"
-    The database returned this data:
-    {data_str}
-
-    Write a brief and clear description of this result in 2-3 sentences.
-    If data is empty or not relevant to a DB query, reply as a
-    friendly assistant and mention you can help with sales,
-    stock, orders and customers.
-    """
-    return call_llm(prompt)
+def generate_response(user_question, data_str):
+    prompt = RESPONSE_PROMPT.format(question=user_question, data=data_str)
+    messages = [{"role": "user", "content": prompt}]
+    return call_llm(messages)
 
 
 def get_chat_response(user_question):
     try:
-        sql = generate_sql(user_question)
+        history = load_history()
+        save_message("user", user_question)
+        sql = generate_sql(user_question, history)
 
-        data, error = run_sql(sql)
-
-        if error or not data:
-            data_str = "No data found."
+        if sql.upper() == "NOT_SQL" or not sql.strip().lower().startswith("select"):
+            data_str = "No database query needed for this message."
         else:
-            data_str = "\n".join(
-                [", ".join(f"{k}: {v}" for k, v in row.items()) for row in data]
-            )
-
-        description = generate_description(user_question, data_str)
-        return description
+            data, error = run_sql(sql)
+            if error or not data:
+                data_str = "No data found or query returned an error."
+            else:
+                data_str = "\n".join(
+                    [", ".join(f"{k}: {v}" for k, v in row.items()) for row in data]
+                )
+        reply = generate_response(user_question, data_str)
+        save_message("assistant", reply)
+        return reply
 
     except Exception as e:
         return f"Something went wrong: {str(e)}"
