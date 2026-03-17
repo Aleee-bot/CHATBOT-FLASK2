@@ -79,11 +79,20 @@ def generate_response(user_question, data_str):
     messages = [{"role": "user", "content": prompt}]
     return call_llm(messages)
 
+WRITE_KEYWORDS = ["delete", "remove", "drop", "erase", "update", "modify", 
+                  "edit", "change", "insert", "add new", "create new"]
 
 def get_chat_response(user_question):
     try:
         history = load_history()
         save_message("user", user_question)
+
+        q_lower = user_question.lower()
+        if any(word in q_lower for word in WRITE_KEYWORDS):
+            reply = "I'm not able to modify data. I can only read and report. Please use your admin panel to make any changes."
+            save_message("assistant", reply)
+            return reply
+
         sql = generate_sql(user_question, history)
 
         if sql.upper() == "NOT_SQL" or not sql.strip().lower().startswith("select"):

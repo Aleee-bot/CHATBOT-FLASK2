@@ -1,12 +1,15 @@
 import os
 from dotenv import load_dotenv
 from flask_migrate import Migrate
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request , make_response
 from database import db
 from models import Flower, Customer, Order , ChatHistory
 from sqlalchemy import text as sa_text
 #from chatbot import get_chat_response
 from chatbotgroq import get_chat_response
+from report_data import get_report_data
+from report_charts import generate_report
+from datetime import datetime
 
 load_dotenv()
 
@@ -97,6 +100,20 @@ def clear_history():
     ChatHistory.query.delete()
     db.session.commit()
     return jsonify({"message": "Chat history cleared!"})
+
+
+@app.route("/download_report", methods=["GET"])
+def download_report():
+    try:
+        data = get_report_data()        
+        buf = generate_report(data)
+        filename = f"report_{datetime.now().strftime('%Y/%m/%d_%H:%M')}.png"
+        response = make_response(buf.read())
+        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
+        response.headers["Content-Type"] = "image/png"
+        return response
+    except Exception as e:  
+        return jsonify({"error": str(e)})
 
 
 if __name__ == "__main__":

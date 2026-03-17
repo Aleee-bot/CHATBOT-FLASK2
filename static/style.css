@@ -27,18 +27,54 @@ body {
   background: #2d6a4f;
   color: white;
   padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.header-content {
   text-align: center;
 }
 
-.chat-header h2 {
+.header-content h2 {
   font-size: 18px;
   font-weight: 600;
+  margin: 0;
 }
 
-.chat-header p {
+.header-content p {
   font-size: 12px;
   opacity: 0.75;
   margin-top: 3px;
+}
+
+.header-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.header-buttons button,
+.header-buttons a button {
+  padding: 8px 16px;
+  background-color: rgba(255,255,255,0.2);
+  color: white;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  font-family: 'Poppins', sans-serif;
+  font-size: 12px;
+  transition: background-color 0.3s;
+}
+
+.header-buttons button:hover,
+.header-buttons a button:hover {
+  background-color: rgba(255,255,255,0.3);
+}
+
+.header-buttons a {
+  text-decoration: none;
 }
 
 .chat-messages {
@@ -187,21 +223,4 @@ body {
 .chat-input button:disabled {
   background: #aaa;
   cursor: default;
-}
-
-#clearBtn {
-  margin-top: 8px;
-  padding: 6px 14px;
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.5);
-  border-radius: 6px;
-  color: white;
-  font-family: 'Poppins', sans-serif;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background .2s;
-}
-
-#clearBtn:hover {
-  background: rgba(255,255,255,0.15);
 }
