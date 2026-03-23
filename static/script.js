@@ -28,6 +28,77 @@ function addMessage(text, sender) {
   scrollToBottom();
 }
 
+function addChartMessage(base64Image, caption, sender) {
+  const row = document.createElement('div');
+  row.className = 'message ' + sender;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'avatar';
+  avatar.textContent = sender === 'bot' ? '🌸' : '👤';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  
+  // Create chart container
+  const chartContainer = document.createElement('div');
+  chartContainer.className = 'chart-container';
+  
+  // Add image
+  const img = document.createElement('img');
+  img.src = 'data:image/png;base64,' + base64Image;
+  img.className = 'chart-image';
+  img.style.maxWidth = '100%';
+  img.style.height = 'auto';
+  img.style.borderRadius = '8px';
+  
+  // Add caption
+  const captionEl = document.createElement('div');
+  captionEl.className = 'chart-caption';
+  captionEl.textContent = caption;
+  captionEl.style.marginTop = '8px';
+  captionEl.style.fontSize = '13px';
+  captionEl.style.textAlign = 'center';
+  
+  // Add download button (initially hidden)
+  const downloadBtn = document.createElement('a');
+  downloadBtn.className = 'download-btn';
+  downloadBtn.href = 'data:image/png;base64,' + base64Image;
+  downloadBtn.download = 'chart_' + new Date().getTime() + '.png';
+  downloadBtn.textContent = '⬇️ Download Chart';
+  downloadBtn.style.display = 'none';  // Hidden initially
+  downloadBtn.style.marginTop = '8px';
+  downloadBtn.style.padding = '6px 12px';
+  downloadBtn.style.backgroundColor = '#3FB950';
+  downloadBtn.style.color = 'white';
+  downloadBtn.style.textDecoration = 'none';
+  downloadBtn.style.borderRadius = '4px';
+  downloadBtn.style.fontSize = '12px';
+  downloadBtn.style.cursor = 'pointer';
+  
+  // Show download button only after image is fully loaded
+  img.onload = function() {
+    downloadBtn.style.display = 'inline-block';
+  };
+  
+  // Handle image load errors
+  img.onerror = function() {
+    downloadBtn.textContent = '❌ Failed to load chart';
+    downloadBtn.style.display = 'inline-block';
+    downloadBtn.style.backgroundColor = '#F85149';
+    downloadBtn.style.cursor = 'default';
+  };
+  
+  chartContainer.appendChild(img);
+  chartContainer.appendChild(captionEl);
+  chartContainer.appendChild(downloadBtn);
+  bubble.appendChild(chartContainer);
+
+  row.appendChild(avatar);
+  row.appendChild(bubble);
+  messages.appendChild(row);
+  scrollToBottom();
+}
+
 function showTyping() {
   const row = document.createElement('div');
   row.className = 'message bot typing';
@@ -59,6 +130,7 @@ function sendMessage() {
   addMessage(text, 'user');
   input.value = '';
   sendBtn.disabled = true;
+  input.disabled = true;  // Prevent sending multiple messages while processing
 
   showTyping();
 
@@ -70,14 +142,23 @@ function sendMessage() {
   .then(response => response.json())
   .then(data => {
     removeTyping();
-    addMessage(data.reply, 'bot');
+    
+    // Check if response includes a chart
+    if (data.chart) {
+      addChartMessage(data.chart, data.message, 'bot');
+    } else {
+      addMessage(data.message || data, 'bot');
+    }
+    
     sendBtn.disabled = false;
+    input.disabled = false;  // Re-enable input
     input.focus();
   })
   .catch(error => {
     removeTyping();
     addMessage('Sorry, something went wrong. Please try again.', 'bot');
     sendBtn.disabled = false;
+    input.disabled = false;  // Re-enable input on error
     input.focus();
   });
 }

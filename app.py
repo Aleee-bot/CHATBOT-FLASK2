@@ -1,12 +1,11 @@
 import os
 from dotenv import load_dotenv
 from flask_migrate import Migrate
-from flask import Flask, render_template, jsonify, request , make_response
+from flask import Flask, render_template, jsonify, request, make_response
 from database import db
 from models import Flower, Customer, Order , ChatHistory
 from sqlalchemy import text as sa_text
-#from chatbot import get_chat_response
-from chatbotgroq import get_chat_response
+from chatbotgroq import get_chat_response, reset_daily_tokens
 from report_data import get_report_data
 from report_charts import generate_report
 from datetime import datetime
@@ -29,8 +28,8 @@ def home():
 @app.route("/chat", methods=["POST"])
 def chat():
     user_message = request.json["message"]
-    reply = get_chat_response(user_message)
-    return jsonify({"reply": reply})
+    response_data = get_chat_response(user_message)
+    return jsonify(response_data)
 
 
 @app.route("/report", methods=["GET"])
@@ -102,19 +101,29 @@ def clear_history():
     return jsonify({"message": "Chat history cleared!"})
 
 
+@app.route("/reset_tokens", methods=["POST"])
+def reset_tokens():
+    """Debug endpoint to reset token counter (development only)"""
+    success = reset_daily_tokens()
+    return jsonify({
+        "message": "Token log reset" if success else "Failed to reset token log",
+        "success": success
+    })
+
+
 @app.route("/download_report", methods=["GET"])
 def download_report():
     try:
         data = get_report_data()        
         buf = generate_report(data)
-        filename = f"report_{datetime.now().strftime('%Y/%m/%d_%H:%M')}.png"
+        filename = f"report_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.png"
         response = make_response(buf.read())
+        buf.close()
         response.headers["Content-Disposition"] = f"attachment; filename={filename}"
         response.headers["Content-Type"] = "image/png"
         return response
     except Exception as e:  
         return jsonify({"error": str(e)})
-
-
+    
 if __name__ == "__main__":
     app.run(debug=True)
