@@ -7,7 +7,7 @@ from sqlalchemy import text
 from dotenv import load_dotenv
 from models import ChatHistory
 from prompts import SYSTEM_PROMPT, SQL_PROMPT, SCHEMA
-from dynamic_charts import detect_report_request, generate_chart_from_request, buffer_to_base64
+from dynamic_charts import extract_chart_type_from_input, generate_chart_with_type, buffer_to_base64
 from langchain_groq import ChatGroq  
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
@@ -20,53 +20,32 @@ TOKEN_LOG_FILE = "token_usage_log.json"
 
 
 def extract_dates_from_text(text: str) -> list:
-    """Extract ANY date mentioned in text using regex patterns.
-    
-    WHY: Capture all date references (not just holidays) so chatbot remembers
-         context like "March 15", "Feb 14", "2026", date ranges, etc.
-    
-    Patterns detected:
-    - Explicit dates: "February 14", "Feb 14", "3/15", "2026-03-15"
-    - Month-year: "March 2026", "Mar 2026"
-    - Day-month-year: "15 March 2026", "March 15, 2026"
-    - Year only: "2026"
-    - Ranges: "March 10 to March 20"
-    
-    Returns: List of date references found, e.g. ["February 14", "2026", "March 15"]
-    """
     dates_found = []
     
-    # Pattern 1: Full date with month name (e.g., "February 14", "Feb 14, 2026")
     month_pattern = r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{1,2}(?:,?\s*\d{4})?'
     matches = re.findall(month_pattern, text, re.IGNORECASE)
     dates_found.extend(matches)
     
-    # Pattern 2: Full date format (e.g., "2026-03-15" or "03/15/2026" or "15-03-2026")
     num_date_pattern = r'\d{1,4}[-/]\d{1,2}[-/]\d{1,4}'
     matches = re.findall(num_date_pattern, text)
     dates_found.extend(matches)
     
-    # Pattern 3: Day and full month (e.g., "14 February", "15 March 2026")
     day_month_pattern = r'\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)(?:\s+\d{4})?'
     matches = re.findall(day_month_pattern, text, re.IGNORECASE)
     dates_found.extend(matches)
     
-    # Pattern 4: Month and year (e.g., "March 2026", "Feb 2026")
     month_year_pattern = r'(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\s+\d{4}'
     matches = re.findall(month_year_pattern, text, re.IGNORECASE)
     dates_found.extend(matches)
     
-    # Pattern 5: Year only (e.g., "2026", "2025")
     year_pattern = r'\b(20\d{2}|19\d{2})\b'
     matches = re.findall(year_pattern, text)
     dates_found.extend(matches)
     
-    # Pattern 6: Relative dates (e.g., "last week", "this month", "yesterday")
     relative_pattern = r'(today|tomorrow|yesterday|last\s+week|last\s+month|this\s+week|this\s+month|next\s+week|next\s+month)'
     matches = re.findall(relative_pattern, text, re.IGNORECASE)
     dates_found.extend(matches)
     
-    # Remove duplicates while preserving order
     seen = set()
     unique_dates = []
     for date in dates_found:
@@ -77,12 +56,7 @@ def extract_dates_from_text(text: str) -> list:
     return unique_dates
 
 
-
-    """Load recent chat history from DB, ordered oldest first.
-    
-    WHY: Provides context for the LLM to understand conversation flow
-    and resolve pronouns like 'it', 'that', etc.
-    """
+def load_history():
     rows = (
         ChatHistory.query
         .order_by(ChatHistory.created_at.asc())
@@ -93,20 +67,6 @@ def extract_dates_from_text(text: str) -> list:
 
 
 def extract_conversation_context(history: list) -> dict:
-    """Extract context from ENTIRE chat history, including all mentioned dates/facts.
-    
-    WHY: Helps resolve pronouns, maintain conversation continuity, AND remember
-         dates/facts mentioned anywhere in conversation (not just hardcoded holidays).
-    
-    Returns: {
-        'recent_exchanges': [{"user": "...", "assistant": "..."}, ...],
-        'last_user_message': "...",
-        'last_assistant_message': "...",
-        'context_summary': "...",
-        'established_facts': ["Valentine's Day is Feb 14", ...],
-        'mentioned_dates': ["February 14", "2026", "March 15", ...]
-    }
-    """
     context = {
         'recent_exchanges': [],
         'last_user_message': None,
@@ -117,7 +77,6 @@ def extract_conversation_context(history: list) -> dict:
     }
     
     try:
-        # Extract hardcoded holiday facts (for semantic understanding)
         FACT_KEYWORDS = {
             'valentine': ['valentine', 'feb 14', 'february 14'],
             'christmas': ['christmas', 'dec 25', 'december 25'],
@@ -128,11 +87,9 @@ def extract_conversation_context(history: list) -> dict:
         facts_found = set()
         all_dates_mentioned = set()
         
-        # Scan ALL history for facts and dates
         for msg in history:
             content_lower = msg['content'].lower()
             
-            # Extract hardcoded facts
             for fact_name, keywords in FACT_KEYWORDS.items():
                 if any(kw in content_lower for kw in keywords):
                     if fact_name not in facts_found:
@@ -144,15 +101,12 @@ def extract_conversation_context(history: list) -> dict:
                         elif 'new year' in fact_name.lower():
                             context['established_facts'].append("New Year is January 1")
             
-            # Extract ANY date mentioned (flexible approach)
             dates = extract_dates_from_text(msg['content'])
             for date in dates:
                 all_dates_mentioned.add(date)
         
-        # Store unique dates in context
         context['mentioned_dates'] = sorted(list(all_dates_mentioned))
         
-        # Extract recent exchanges (last 5 exchanges)
         RECENT_EXCHANGES = 5
         recent_messages = history[-(RECENT_EXCHANGES * 2):] if len(history) > 0 else []
         
@@ -527,10 +481,37 @@ Format numbers clearly: "We sold X units for $Y.Z total"
     return response, token_data
 
 
+def detect_explicit_chart_request(user_message: str) -> bool:
+    """
+    Detect if user EXPLICITLY asked for a chart/visualization.
+    
+    WHY: Only ask for chart type if user really wants one.
+         Don't trigger on generic data queries like "show sales".
+         Only trigger on explicit requests like "show me a pie chart".
+    
+    Returns: True only if user mentioned chart/graph/visualization keywords
+    """
+    chart_keywords = [
+        'chart', 'graph', 'plot', 'visualize', 'visualization',
+        'visual report', 'show chart', 'display chart', 'create chart',
+        'generate chart', 'draw', 'display graph', 'pie', 'bar', 
+        'line chart', 'scatter', 'diagram', 'infographic'
+    ]
+    
+    message_lower = user_message.lower()
+    
+    has_chart_keyword = any(kw in message_lower for kw in chart_keywords)
+    
+    simple_queries = ['show', 'get', 'display', 'list']
+    is_simple_query_only = any(kw in message_lower for kw in simple_queries) and not has_chart_keyword
+    
+    return has_chart_keyword and not is_simple_query_only
+
+
 def get_chat_response(user_question: str):
     try:
         daily_tokens = get_daily_token_usage()
-        DAILY_QUOTA = 50000  # Increased from 20000 for development/testing
+        DAILY_QUOTA = 500000
         if daily_tokens > DAILY_QUOTA:
             warning = f"⚠️ Daily token quota ({DAILY_QUOTA}) exceeded. Used: {daily_tokens}"
             print(f"[WARNING] {warning}")
@@ -555,24 +536,40 @@ def get_chat_response(user_question: str):
             save_message("assistant", reply)
             return {"message": reply, "tokens": {"input": 0, "output": 0, "total": 0}}
 
-        if detect_report_request(user_question):
-            print(f"[CHAT] Report request detected: {user_question}")
-            buf, error = generate_chart_from_request(user_question)
+        if detect_explicit_chart_request(user_question):
+            print(f"[CHAT] Explicit chart request detected: {user_question}")
             
-            if error:
-                reply = f"Could not generate chart: {error}"
+            user_chart_preference = extract_chart_type_from_input(user_question)
+            print(f"[CHAT] User chart preference: {user_chart_preference}")
+            
+            if user_chart_preference:
+                print(f"Chart is ready")
+                buf, error = generate_chart_with_type(user_question, user_chart_preference)
+                
+                if error:
+                    reply = f"Could not generate chart: {error}"
+                    save_message("assistant", reply)
+                    return {"message": reply, "tokens": {"input": 0, "output": 0, "total": 0}}
+                
+                image_base64 = buffer_to_base64(buf)
+                reply = f"Here's your {user_chart_preference} chart!"
                 save_message("assistant", reply)
-                return {"message": reply, "tokens": {"input": 0, "output": 0, "total": 0}}
-            
-            image_base64 = buffer_to_base64(buf)
-            reply = "Chart generated successfully!"
-            save_message("assistant", reply)
-            
-            return {
-                "message": reply,
-                "chart": image_base64,
-                "tokens": {"input": 0, "output": 0, "total": 0}
-            }
+                
+                return {
+                    "message": reply,
+                    "chart": image_base64,
+                    "tokens": {"input": 0, "output": 0, "total": 0}
+                }
+            else:
+                reply = "What type of chart would you like? Choose one:\n• **pie** - Show proportions\n• **bar** - Compare values\n• **line** - Show trends\n• **scatter** - Show relationships"
+                save_message("assistant", reply)
+                
+                return {
+                    "message": reply,
+                    "ask_for_chart": True,
+                    "query": user_question,
+                    "tokens": {"input": 0, "output": 0, "total": 0}
+                }
         
         greeting_reply, _ = handle_greeting(user_question)
         if greeting_reply:
@@ -615,6 +612,7 @@ def get_chat_response(user_question: str):
                 "total": total_tokens["input"] + total_tokens["output"]
             }
         }
+    
 
     except Exception as e:
         error_msg = f"Something went wrong: {str(e)}"

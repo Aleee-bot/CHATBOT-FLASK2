@@ -6,8 +6,7 @@ from database import db
 from models import Flower, Customer, Order , ChatHistory
 from sqlalchemy import text as sa_text
 from chatbotgroq import get_chat_response, reset_daily_tokens
-from report_data import get_report_data
-from report_charts import generate_report
+from dynamic_charts import generate_chart_with_type, buffer_to_base64
 from datetime import datetime
 
 load_dotenv()
@@ -111,19 +110,27 @@ def reset_tokens():
     })
 
 
-@app.route("/download_report", methods=["GET"])
-def download_report():
-    try:
-        data = get_report_data()        
-        buf = generate_report(data)
-        filename = f"report_{datetime.now().strftime('%Y-%m-%d_%H-%M')}.png"
-        response = make_response(buf.read())
-        buf.close()
-        response.headers["Content-Disposition"] = f"attachment; filename={filename}"
-        response.headers["Content-Type"] = "image/png"
-        return response
-    except Exception as e:  
-        return jsonify({"error": str(e)})
+@app.route("/generate_chart", methods=["POST"])
+def generate_chart():
+    data = request.get_json()
+    user_request = data.get('query')
+    chart_type = data.get('chart_type')  
+    
+    if not user_request:
+        return {'error': 'Missing query parameter'}, 400
+    
+    print(f"[API] Generating {chart_type or 'auto'} chart for: {user_request}")
+    buf, error = generate_chart_with_type(user_request, chart_type)
+    
+    if error:
+        return {'error': error}, 400
+    
+    b64 = buffer_to_base64(buf)
+    return {
+        'chart': b64,
+        'success': True,
+        'chart_type': chart_type or 'auto'
+    }
     
 if __name__ == "__main__":
     app.run(debug=True)
